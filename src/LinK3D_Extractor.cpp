@@ -3,6 +3,7 @@
 
 namespace BoW3D
 {
+    //构造函数 给所有私有成员变量赋值
     LinK3D_Extractor::LinK3D_Extractor(
             int nScans_, 
             float scanPeriod_, 
@@ -15,14 +16,21 @@ namespace BoW3D
             distanceTh(distanceTh_),          
             matchTh(matchTh_)
             {
-                scanNumTh = ceil(nScans / 6);
-                ptNumTh = ceil(1.5 * scanNumTh);                
+                scanNumTh = ceil(nScans / 6); //向下取整 意义？
+                ptNumTh = ceil(1.5 * scanNumTh); //向下取整 意义？               
             }
 
+    /**
+     * @brief 移除近处点云
+     * 
+     * @param[in] cloud_in 输入点云 
+     * @param[out] cloud_out 输出点云
+     */
     void LinK3D_Extractor::removeClosedPointCloud(
             const pcl::PointCloud<pcl::PointXYZ> &cloud_in,
             pcl::PointCloud<pcl::PointXYZ> &cloud_out)
     {
+        //把输入点云的头部信息给输出点云，头部信息包含点云序列号seq，时间戳stamp，坐标系ID frame_id
         if (&cloud_in != &cloud_out)
         {
             cloud_out.header = cloud_in.header;
@@ -30,9 +38,10 @@ namespace BoW3D
         }
 
         size_t j = 0;
-
+        //遍历输入点云
         for (size_t i = 0; i < cloud_in.points.size(); ++i)
         {
+            //计算点到原点距离，距离过小跳过，不给到输出点云
             if (cloud_in.points[i].x * cloud_in.points[i].x 
                 + cloud_in.points[i].y * cloud_in.points[i].y 
                 + cloud_in.points[i].z * cloud_in.points[i].z 
@@ -45,34 +54,55 @@ namespace BoW3D
             j++;
         }
 
+        //如果有点被删除，输出点云分配正好的内存大小
         if (j != cloud_in.points.size())
         {
             cloud_out.points.resize(j);
         }
 
+        //一般height代表激光束或扫描线的数量，如果点云无序，通常设置为1
         cloud_out.height = 1;
+        //一般width代表每行扫描线有多少点，点云无序通常为点云中点的总数
         cloud_out.width = static_cast<uint32_t>(j);
+        //如果点云数据中没有缺失的点，点云就是密集的true，点坐标为NaN就是有缺失
         cloud_out.is_dense = true;
     }
 
+    /**
+     * @brief 从点云中提取边缘点
+     * 
+     * @param[in] pLaserCloudIn 输入点云指针
+     * @param[out] edgePoints 提取到的边缘点，类型是存储边缘点的二维容器
+     */
     void LinK3D_Extractor::extractEdgePoint(
             pcl::PointCloud<pcl::PointXYZ>::Ptr pLaserCloudIn, 
             ScanEdgePoints &edgePoints)
-    {
+    {   
+        //起始和终止索引
         vector<int> scanStartInd(nScans, 0);
         vector<int> scanEndInd(nScans, 0);
 
+        //输入点云赋值
         pcl::PointCloud<pcl::PointXYZ> laserCloudIn;
         laserCloudIn = *pLaserCloudIn;
+        //存储有效点在输入点云中的索引
         vector<int> indices;
 
+        //删除NaN和inf点
         pcl::removeNaNFromPointCloud(laserCloudIn, laserCloudIn, indices);
+        //删除近距离的点
         removeClosedPointCloud(laserCloudIn, laserCloudIn);
 
+        //点云规模
         int cloudSize = laserCloudIn.points.size();
+        // 一帧点云中起始点角度（弧度单位） 这里也加了负号？？？？ atan2返回-PI~PI 加负号相当于把原来的点云坐标系y轴方向调换了建了一个新的坐标系？？LOAM里说雷达是顺时针坐标系，应该就是左手坐标系的意思，我们计算用的是右手坐标系，所以要把y轴换方向？但是点坐标没换啊？
         float startOri = -atan2(laserCloudIn.points[0].y, laserCloudIn.points[0].x);
+        //下面的处理是保证角度差在一个合理的范围内 还没搞懂？？？？？？？？？
+        //一帧点云中结束点角度（弧度单位） 先把2PI加上，由于atan2返回的是(-PI~PI]，结束角度可能小于起始角度，加2PI确保结束角度大于起始角度，坐标系是逆时针
         float endOri = -atan2(laserCloudIn.points[cloudSize - 1].y, laserCloudIn.points[cloudSize - 1].x) + 2 * M_PI;
     
+        //这段逻辑确保endOri和startOri角度差在PI~3PI之间？
+        //已经加了2PI了
         if (endOri - startOri > 3 * M_PI)
         {
             endOri -= 2 * M_PI;
@@ -83,19 +113,24 @@ namespace BoW3D
         }
         
         bool halfPassed = false;
+        //点云规模
         int count = cloudSize;
+        //单个处理的点
         pcl::PointXYZI point;
+        //按扫描线束分别存储点云
         vector<pcl::PointCloud<pcl::PointXYZI>> laserCloudScans(nScans);
         
         for (int i = 0; i < cloudSize; i++)
         {
+            //取点
             point.x = laserCloudIn.points[i].x;
             point.y = laserCloudIn.points[i].y;
             point.z = laserCloudIn.points[i].z;
-            
+            //atan返回(-PI/2,PI/2) 算点的角度，进而算线束
             float angle = atan(point.z / sqrt(point.x * point.x + point.y * point.y)) * 180 / M_PI;
             int scanID = 0;
 
+            //计算有效范围内的点数 count 计算所属scanID
             if (nScans == 16)
             {
                 scanID = int((angle + 15) / 2 + 0.5);
@@ -132,6 +167,7 @@ namespace BoW3D
                 printf("wrong scan number\n");
             }
             
+            //水平角度
             float ori = -atan2(point.y, point.x);
             if (!halfPassed)
             { 
@@ -161,20 +197,25 @@ namespace BoW3D
                     ori -= 2 * M_PI;
                 }
             }
-
+            //存当前点的水平角度
             point.intensity = ori;
+            //存点
             laserCloudScans[scanID].points.push_back(point);            
         }
-
+        //扫描线数
         size_t scanSize = laserCloudScans.size();
+        //edgePoints是二维容器，第一维是扫描线数
         edgePoints.resize(scanSize);
+        //原来存输入点云的点数，改存scanID有效范围内的点数
         cloudSize = count;
                 
         for(int i = 0; i < nScans; i++)
         {
             int laserCloudScansSize = laserCloudScans[i].size();
+            //一条扫描线上点数过少，不处理
             if(laserCloudScansSize >= 15)
             {
+                //算曲率
                 for(int j = 5; j < laserCloudScansSize - 5; j++)
                 {
                     float diffX = laserCloudScans[i].points[j - 5].x + laserCloudScans[i].points[j - 4].x
@@ -199,9 +240,12 @@ namespace BoW3D
                     float curv = diffX * diffX + diffY * diffY + diffZ * diffZ;
                     if(curv > 10 && curv < 20000)
                     {
+                        //前面intensity存的就是点的水平面上的角度
                         float ori = laserCloudScans[i].points[j].intensity;
+                        //相对起始点的“时间”，其实是水平角度比例，做运动补偿用
                         float relTime = (ori - startOri) / (endOri - startOri);
 
+                        //自定义的点云数据
                         PointXYZSCA tmpPt;
                         tmpPt.x = laserCloudScans[i].points[j].x;
                         tmpPt.y = laserCloudScans[i].points[j].y;
@@ -217,20 +261,30 @@ namespace BoW3D
     }    
 
     //Roughly divide the areas to save time for clustering.
+    /**
+     * @brief 粗分区域
+     * 
+     * @param[in] scanCloud 存储边缘点的二维容器，第一维代表扫描线数
+     * @param[out] sectorAreaCloud 存储边缘点的二维容器，第一维代表所属区域，一共120个区域
+     */
     void LinK3D_Extractor::divideArea(ScanEdgePoints &scanCloud, ScanEdgePoints &sectorAreaCloud)
     {
+        //分120区域
         sectorAreaCloud.resize(120); //The horizontal plane is divided into 120 sector area centered on LiDAR coordinate.
+        //扫描线数
         int numScansPt = scanCloud.size();
         if(numScansPt == 0)
         {
             return;
         }
-            
+        //按扫描线数遍历    
         for(int i = 0; i < numScansPt; i++) 
-        {
+        {   
+            //遍历一条扫描线上的点
             int numAScanPt = scanCloud[i].size();
             for(int j = 0; j < numAScanPt; j++)
-            {                
+            {               
+                //计算所属区域  
                 int areaID = 0;
                 float angle = scanCloud[i][j].angle;
                 
@@ -246,13 +300,18 @@ namespace BoW3D
                 {
                     areaID = std::floor(((angle + 2 * M_PI) / (2 * M_PI)) * 120);
                 }
-
+                //存点
                 sectorAreaCloud[areaID].push_back(scanCloud[i][j]);
             }
         }
     }
 
-
+    /**
+     * @brief 计算聚类点投影到水平面后的中心点到原点的平均距离
+     * 
+     * @param[in] cluster 三维聚类点
+     * @return float 平均距离
+     */
     float LinK3D_Extractor::computeClusterMean(vector<PointXYZSCA> &cluster)
     {        
         float distSum = 0;
@@ -266,6 +325,12 @@ namespace BoW3D
         return (distSum/numPt);
     }
 
+    /**
+     * @brief 分别计算三维聚类点投影到水平面后X Y坐标轴上的平均值
+     * 
+     * @param[in] cluster 三维聚类点
+     * @param[out] xyMeans XY坐标轴上的平均值 
+     */
     void LinK3D_Extractor::computeXYMean(vector<PointXYZSCA> &cluster, std::pair<float, float> &xyMeans)
     {         
         int numPt = cluster.size();
@@ -283,6 +348,12 @@ namespace BoW3D
         xyMeans = std::make_pair(xMean, yMean);
     }
 
+    /**
+     * @brief 在按120个区域存储的边缘点上聚类
+     * 
+     * @param[in] sectorAreaCloud 按区域存储的边缘点
+     * @param[out] clusters 二维边缘点容器
+     */
     void LinK3D_Extractor::getCluster(const ScanEdgePoints &sectorAreaCloud, ScanEdgePoints &clusters)
     {    
         ScanEdgePoints tmpclusters;
@@ -292,8 +363,10 @@ namespace BoW3D
         int numArea = sectorAreaCloud.size();
 
         //Cluster for each sector area.
+        //遍历所有区域
         for(int i = 0; i < numArea; i++)
         {
+            //区域内点数小于6跳过
             if(sectorAreaCloud[i].size() < 6)
                 continue;
 
@@ -301,18 +374,21 @@ namespace BoW3D
             ScanEdgePoints curAreaCluster(1, dummy);
             curAreaCluster[0][0] = sectorAreaCloud[i][0];
 
+            //遍历区域内的所有点
             for(int j = 1; j < numPt; j++)
             {
                 int numCluster = curAreaCluster.size();
 
                 for(int k = 0; k < numCluster; k++)
                 {
+                    //mean：计算聚类点投影到水平面后到原点的平均距离
                     float mean = computeClusterMean(curAreaCluster[k]);
                     std::pair<float, float> xyMean;
+                    //xyMean：聚类点投影到水平面后，分别在x，y轴上到原点的平均距离
                     computeXYMean(curAreaCluster[k], xyMean);
-                    
+                    //取当前区域内一个点
                     PointXYZSCA tmpPt = sectorAreaCloud[i][j];
-                                        
+                    //如果当前点距离聚类中心点，分别在x，y轴上距离中心店距离小于阈值，存到当前聚类中              
                     if(abs(distXY(tmpPt) - mean) < distanceTh 
                         && abs(xyMean.first - tmpPt.x) < distanceTh 
                         && abs(xyMean.second - tmpPt.y) < distanceTh)
@@ -320,6 +396,7 @@ namespace BoW3D
                         curAreaCluster[k].emplace_back(tmpPt);
                         break;
                     }
+                    //反之，存一个空的，当前点存到后面？？
                     else if(abs(distXY(tmpPt) - mean) >= distanceTh && k == numCluster-1)
                     {
                         curAreaCluster.emplace_back(dummy);
@@ -332,15 +409,17 @@ namespace BoW3D
                 }
             }
 
+            //遍历每个区域
             int numCluster = curAreaCluster.size();
             for(int j = 0; j < numCluster; j++)
             {
                 int numPt = curAreaCluster[j].size();
-
+                //区域内点数过少跳过
                 if(numPt < ptNumTh)
                 {
                     continue;
                 }
+                //区域内点数足够，存到二维容器中
                 tmpclusters.emplace_back(curAreaCluster[j]);
             }
         }
@@ -348,19 +427,23 @@ namespace BoW3D
         int numCluster = tmpclusters.size();
         
         vector<bool> toBeMerge(numCluster, false);
+        //键-多值映射容器：相同的键可以出现多次
         multimap<int, int> mToBeMergeInd;
         set<int> sNeedMergeInd;
 
         //Merge the neighbor clusters.
+        //遍历所有区域
         for(int i = 0; i < numCluster; i++)
         {
             if(toBeMerge[i]){
                 continue;
             }
+            //当前区域聚类点投影到水平面后到原点的平均距离
             float means1 = computeClusterMean(tmpclusters[i]);
             std::pair<float, float> xyMeans1;
+            //x，y轴上的平均距离
             computeXYMean(tmpclusters[i], xyMeans1);
-
+            //再次遍历所有区域，同样的操作
             for(int j = 1; j < numCluster; j++)
             {
                 if(toBeMerge[j])
@@ -372,10 +455,12 @@ namespace BoW3D
                 std::pair<float, float> xyMeans2;
                 computeXYMean(tmpclusters[j], xyMeans2);
 
+                //现在有了第i区域和第j区域的信息，计算各种平均距离的差值
                 if(abs(means1 - means2) < 2*distanceTh 
                     && abs(xyMeans1.first - xyMeans2.first) < 2*distanceTh 
                     && abs(xyMeans1.second - xyMeans2.second) < 2*distanceTh)
                 {
+                    //距离过近，就要合并掉
                     mToBeMergeInd.insert(std::make_pair(i, j));
                     sNeedMergeInd.insert(i);
                     toBeMerge[i] = true;
@@ -384,7 +469,7 @@ namespace BoW3D
             }
 
         }
-
+        //如果没有需要合并的，就全放进最终的聚类容器
         if(sNeedMergeInd.empty())
         {
             for(int i = 0; i < numCluster; i++)
@@ -394,6 +479,7 @@ namespace BoW3D
         }
         else
         {
+            //遍历所有的cluster
             for(int i = 0; i < numCluster; i++)
             {
                 if(toBeMerge[i] == false)
