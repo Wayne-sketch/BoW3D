@@ -482,19 +482,23 @@ namespace BoW3D
             //遍历所有的cluster
             for(int i = 0; i < numCluster; i++)
             {
+                // 如果当前 cluster 不需要被合并，则加入 clusters 中
                 if(toBeMerge[i] == false)
                 {
                     clusters.emplace_back(tmpclusters[i]);
                 }
             }
             
+            // 遍历需要被合并的索引集合 sNeedMergeInd
             for(auto setIt = sNeedMergeInd.begin(); setIt != sNeedMergeInd.end(); ++setIt)
             {
                 int needMergeInd = *setIt;
+                // 从 mToBeMergeInd 中找到需要合并的 cluster 的索引
                 auto entries = mToBeMergeInd.count(needMergeInd);
                 auto iter = mToBeMergeInd.find(needMergeInd);
                 vector<int> vInd;
 
+                // 将需要合并的 cluster 的所有索引加入到 vInd 中
                 while(entries)
                 {
                     int ind = iter->second;
@@ -503,9 +507,11 @@ namespace BoW3D
                     --entries;
                 }
 
+                // 将需要合并的 cluster 加入到 clusters 中
                 clusters.emplace_back(tmpclusters[needMergeInd]);
                 size_t numCluster = clusters.size();
 
+                // 将所有需要合并的 cluster 的点加入到 clusters 中
                 for(size_t j = 0; j < vInd.size(); j++)
                 {
                     for(size_t ptNum = 0; ptNum < tmpclusters[vInd[j]].size(); ptNum++)
@@ -517,12 +523,27 @@ namespace BoW3D
         }       
     }
 
+    /**
+     * @brief 计算两点方向向量，没有归一化
+     * 
+     * @param[in] ptFrom 起始点
+     * @param[in] ptTo 结束点
+     * @param[out] direction 方向向量
+     */
     void LinK3D_Extractor::computeDirection(pcl::PointXYZI ptFrom, pcl::PointXYZI ptTo, Eigen::Vector2f &direction)
     {
         direction(0, 0) = ptTo.x - ptFrom.x;
         direction(1, 0) = ptTo.y - ptFrom.y;
     }
 
+    /**
+     * @brief 从输入的 ScanEdgePoints 类型的聚类（clusters）中提取关键点，条件是聚类中点的数量大于 ptNumTh，
+     * 并且在扫描线上的数量大于 scanNumTh。该函数还会返回提取的关键点的列表，并将符合条件的聚类存储在 validCluster 中
+     * 
+     * @param[in] clusters 聚类
+     * @param[out] validCluster 有效聚类
+     * @return vector<pcl::PointXYZI> 关键点
+     */
     vector<pcl::PointXYZI> LinK3D_Extractor::getMeanKeyPoint(const ScanEdgePoints &clusters, ScanEdgePoints &validCluster)
     {        
         int count = 0;
@@ -532,14 +553,18 @@ namespace BoW3D
         ScanEdgePoints tmpEdgePoints;
         map<float, int> distanceOrder;
 
+        //遍历所有聚类
         for(int i = 0; i < numCluster; i++)
-        {
-            int ptCnt = clusters[i].size();      
+        {   
+            //当前聚类点数
+            int ptCnt = clusters[i].size();  
+            //如果聚类中的点数小于设定的阈值 ptNumTh，则忽略该聚类。    
             if(ptCnt < ptNumTh)
             {
                 continue;
             }
 
+            //计算聚类中所有点的坐标和强度值的平均值，并判断该聚类在多少个不同的扫描线上
             vector<PointXYZSCA> tmpCluster;
             set<int> scans;
             float x = 0, y = 0, z = 0, intensity = 0;
@@ -559,7 +584,8 @@ namespace BoW3D
             {
                 continue;
             }
-
+            //如果聚类在足够多的扫描线上（大于等于 scanNumTh）
+            //表示该聚类的平均点，并计算该点的平方距离（distance）作为键。
             pcl::PointXYZI pt;
             pt.x = x/ptCnt;
             pt.y = y/ptCnt;
@@ -567,7 +593,8 @@ namespace BoW3D
             pt.intensity = intensity/ptCnt;
 
             float distance = pt.x * pt.x + pt.y * pt.y + pt.z * pt.z;
-
+            //检查该距离是否已经存在于 distanceOrder 中，如果存在，则跳过该聚类，否则将该距离和计数器（count）
+            //的映射添加到 distanceOrder 中，然后将平均点和原始聚类加入到 tmpKeyPoints 和 tmpEdgePoints 中。
             auto iter = distanceOrder.find(distance);
             if(iter != distanceOrder.end())
             {
@@ -581,6 +608,8 @@ namespace BoW3D
             tmpEdgePoints.emplace_back(clusters[i]);            
         }
 
+        //遍历排序后的 distanceOrder，将排序后的关键点（tmpKeyPoints）加入到 keyPoints 中，
+        //对应的有效聚类（tmpEdgePoints）加入到 validCluster 中。
         for(auto iter = distanceOrder.begin(); iter != distanceOrder.end(); iter++)
         {
             int index = (*iter).second;
@@ -593,6 +622,7 @@ namespace BoW3D
         return keyPoints;
     }
 
+    //将输入的浮点数保留一位小数，采用四舍五入的方式
     float LinK3D_Extractor::fRound(float in)
     {
         float f;
@@ -602,18 +632,31 @@ namespace BoW3D
         return f;
     }
 
+    /**
+     * @brief 从输入的关键点（keyPoints）计算描述符（descriptors）。该函数使用了一个特殊的算法，
+     * 通过计算最近的三个关键点之间的相对方向和距离，生成一个长度为180的描述符，用于描述每个关键点周围的特征。
+     * 
+     * ！！！关于生成描述子的细节分析
+     * 找到三个最近的关键点，分别作为主方向，开始一圈算下来，找每个区域内最近的关键点
+     * 但是都会对齐到最近的关键点作为主方向，也就是以areaDis[0]为第一个区域，然后按照论文中的优先级给描述子赋值
+     * 
+     * @param[in] keyPoints 关键点
+     * @param[out] descriptors 描述子
+     */
     void LinK3D_Extractor::getDescriptors(const vector<pcl::PointXYZI> &keyPoints, 
                                           cv::Mat &descriptors)
     {
+        //如果输入的关键点为空，直接返回。
         if(keyPoints.empty())
         {
             return;
         }
 
+        //初始化描述符矩阵 descriptors，它的行数为关键点的数量，列数为180，每个元素初始值为0
         int ptSize = keyPoints.size();
 
         descriptors = cv::Mat::zeros(ptSize, 180, CV_32FC1); 
-
+        //创建两个二维向量表，distanceTab 用于存储关键点之间的距离，directionTab 用于存储关键点之间的相对方向。
         vector<vector<float>> distanceTab;
         vector<float> oneRowDis(ptSize, 0);
         distanceTab.resize(ptSize, oneRowDis);
@@ -624,6 +667,7 @@ namespace BoW3D
         directionTab.resize(ptSize, oneRowDirect);
 
         //Build distance and direction tables for fast descriptor generation.
+        //遍历关键点，计算每两个关键点之间的距离和相对方向，并将结果存储在 distanceTab 和 directionTab 中。
         for(size_t i = 0; i < keyPoints.size(); i++)
         {
             for(size_t j = i+1; j < keyPoints.size(); j++)
@@ -642,15 +686,20 @@ namespace BoW3D
             }
         }
 
+        //计算描述符
         for(size_t i = 0; i < keyPoints.size(); i++)
         {
+            //距离i关键点的距离表
             vector<float> tempRow(distanceTab[i]);
+            //距离从小到大排序
             std::sort(tempRow.begin(), tempRow.end());
             int Index[3];
            
             //Get the closest three keypoints of current keypoint.
+            // 获取当前关键点的最近的三个关键点的索引
             for(int k = 0; k < 3; k++)
-            {                
+            {              
+                //从k+1开始是因为每个距离表中都有自身和自身的距离 为0，排序后会在最前面  
                 vector<float>::iterator it1 = find(distanceTab[i].begin(), distanceTab[i].end(), tempRow[k+1]); 
                 if(it1 == distanceTab[i].end())
                 {
@@ -658,51 +707,57 @@ namespace BoW3D
                 }
                 else
                 {
+                    //计算两个迭代器之间的元素个数
                     Index[k] = std::distance(distanceTab[i].begin(), it1);
                 }
             }
 
             //Generate the descriptor for each closest keypoint. 
             //The final descriptor is based on the priority of the three closest keypoint.
+            //计算描述符的180个区域
             for(int indNum = 0; indNum < 3; indNum++)
             {
-                int index = Index[indNum];
+                int index = Index[indNum]; // 当前最近的关键点的索引
                 Eigen::Vector2f mainDirection;
-                mainDirection = directionTab[i][index];
+                mainDirection = directionTab[i][index]; // 主方向，即当前关键点指向最近关键点的方向
                 
-                vector<vector<float>> areaDis(180);  
-                areaDis[0].emplace_back(distanceTab[i][index]);
-                          
+                vector<vector<float>> areaDis(180); // 存储180个区域的距离
+                areaDis[0].emplace_back(distanceTab[i][index]); // 将最近的关键点的距离存入第0个区域
+
+                // 遍历所有关键点，计算它们相对于当前关键点的方向和距离       
                 for(size_t j = 0; j < keyPoints.size(); j++)
                 {
                     if(j == i || (int)j == index)
                     {
-                        continue;
+                        continue; // 跳过当前关键点和最近关键点
                     }
                     
-                    Eigen::Vector2f otherDirection = directionTab[i][j];
+                    Eigen::Vector2f otherDirection = directionTab[i][j]; // 当前关键点指向其他关键点的方向
                 
                     Eigen::Matrix2f matrixDirect;
                     matrixDirect << mainDirection(0, 0), mainDirection(1, 0), otherDirection(0, 0), otherDirection(1, 0);
-                    float deter = matrixDirect.determinant();
+                    float deter = matrixDirect.determinant(); // 计算两个向量构成的矩阵的行列式，用于判断方向
 
                     int areaNum = 0;
                     double cosAng = (double)mainDirection.dot(otherDirection) / (double)(mainDirection.norm() * otherDirection.norm());                                 
+                    // 计算两个向量的余弦值，用于计算角度
                     if(abs(cosAng) - 1 > 0)
                     {   
                         continue;
                     }
-                                       
-                    float angle = acos(cosAng) * 180 / M_PI;
+                    //acos返回[0,PI]弧度值
+                    float angle = acos(cosAng) * 180 / M_PI; // 计算夹角的角度值
                     
                     if(angle < 0 || angle > 180)
                     {
-                        continue;
+                        continue; // 角度不在0到180度范围内，跳过
                     }
                     
+                    //这段代码的目的是将一个给定的角度映射到 [0, 180) 范围内的180个2度
+                    //的角度区间中的一个。它考虑了向量的相对方向，确保了角度的区间映射在180度内 GPT，可能不对！！！！
                     if(deter > 0)
                     {
-                        areaNum = ceil((angle - 1) / 2);                         
+                        areaNum = ceil((angle - 1) / 2); // 确定当前角度在哪个区域，通过向上取整将角度划分为区域                     
                     }
                     else
                     {
@@ -719,11 +774,12 @@ namespace BoW3D
 
                     if(areaNum != 0)
                     {
-                        areaDis[areaNum].emplace_back(distanceTab[i][j]);
+                        areaDis[areaNum].emplace_back(distanceTab[i][j]);// 将当前关键点到该点的距离存入areaDis
                     }
                 }
                 
-                float *descriptor = descriptors.ptr<float>(i);                                
+                // 遍历180个区域，将最短距离存入描述符中
+                float *descriptor = descriptors.ptr<float>(i);     // 获取当前关键点的描述符指针                           
 
                 for(int areaNum = 0; areaNum < 180; areaNum++) 
                 {
@@ -733,11 +789,11 @@ namespace BoW3D
                     }
                     else
                     {
-                        std::sort(areaDis[areaNum].begin(), areaDis[areaNum].end());
+                        std::sort(areaDis[areaNum].begin(), areaDis[areaNum].end()); // 将距离值排序
 
                         if(descriptor[areaNum] == 0)
                         {
-                            descriptor[areaNum] = areaDis[areaNum][0]; 
+                            descriptor[areaNum] = areaDis[areaNum][0]; // 将最短距离存入描述符中
                         }                        
                     }
                 }                
@@ -745,6 +801,17 @@ namespace BoW3D
         }
     }
 
+    /**
+     * @brief 实现了一个特征匹配的函数 match。该函数接受两组特征点（curAggregationKeyPt 和 toBeMatchedKeyPt）、
+     * 对应的特征描述子（curDescriptors 和 toBeMatchedDescriptors）以及一个空的匹配结果容器 vMatchedIndex。
+     * 函数的目标是找到两组特征点中相互匹配的特征点索引，并将匹配结果存储在 vMatchedIndex 中。
+     * 
+     * @param curAggregationKeyPt 
+     * @param toBeMatchedKeyPt 
+     * @param curDescriptors 
+     * @param toBeMatchedDescriptors 
+     * @param vMatchedIndex 
+     */
     void LinK3D_Extractor::match(
             vector<pcl::PointXYZI> &curAggregationKeyPt, 
             vector<pcl::PointXYZI> &toBeMatchedKeyPt,
@@ -752,29 +819,35 @@ namespace BoW3D
             cv::Mat &toBeMatchedDescriptors, 
             vector<pair<int, int>> &vMatchedIndex)
     {        
+        // 获取两组特征点的数量
         int curKeypointNum = curAggregationKeyPt.size();
         int toBeMatchedKeyPtNum = toBeMatchedKeyPt.size();
-        
+        // 记录每个当前特征点与待匹配特征点之间的匹配分数。其中，键为当前特征点的索引，值为匹配分数
         multimap<int, int> matchedIndexScore;      
+        // 记录匹配的特征点索引。其中，键为待匹配特征点的索引，值为当前特征点的索引
         multimap<int, int> mMatchedIndex;
+        // 记录可能存在重复匹配的待匹配特征点的索引。
         set<int> sIndex;
-       
+        // 外层循环遍历当前特征点
         for(int i = 0; i < curKeypointNum; i++)
         {
             std::pair<int, int> highestIndexScore(0, 0);
+            //当前特征点描述子
             float* pDes1 = curDescriptors.ptr<float>(i);
-            
+            // 内层循环遍历待匹配特征点
             for(int j = 0; j < toBeMatchedKeyPtNum; j++)
             {
                 int sameDimScore = 0;
                 float* pDes2 = toBeMatchedDescriptors.ptr<float>(j); 
-                
+                //计算两个特征描述子之间的匹配分数。匹配分数的计算基于描述子中对应维度上的差值。
+                //如果差值在阈值范围内，就认为这个维度上匹配成功，该维度的匹配分数加1。
                 for(int bitNum = 0; bitNum < 180; bitNum++)
                 {                    
                     if(pDes1[bitNum] != 0 && pDes2[bitNum] != 0 && abs(pDes1[bitNum] - pDes2[bitNum]) <= 0.2){
                         sameDimScore += 1;
                     }
-                    
+                    // /如果某个待匹配特征点在超过90度的范围内的匹配分数小于3，就跳出内层循环。
+                    //这个条件意味着如果待匹配特征点的描述子在超过90度的范围内都没有足够多的匹配维度，就不再尝试匹配。
                     if(bitNum > 90 && sameDimScore < 3){
                         break;                        
                     }                    
@@ -786,27 +859,36 @@ namespace BoW3D
                     highestIndexScore.second = sameDimScore;
                 }
             }
-            
+            //选择匹配分数最高的待匹配特征点，将当前特征点和它的匹配特征点的索引存储到 mMatchedIndex 和 sIndex 中。
             //Used for removing the repeated matches.
             matchedIndexScore.insert(std::make_pair(i, highestIndexScore.second)); //Record i and its corresponding score.
             mMatchedIndex.insert(std::make_pair(highestIndexScore.first, i)); //Record the corresponding match between j and i.
+            //这是个集合
             sIndex.insert(highestIndexScore.first); //Record the index that may be repeated matches.
         }
 
         //Remove the repeated matches.
+        // 遍历 sIndex 中的待匹配特征点索引
         for(set<int>::iterator setIt = sIndex.begin(); setIt != sIndex.end(); ++setIt)
         {
             int indexJ = *setIt;
+            //mMatchedIndex存的是<分数最高的待匹配特征点索引,当前特征点索引> 这里不好描述，参考即可
             auto entries = mMatchedIndex.count(indexJ);
+            //如果某个待匹配特征点只有一个匹配项，直接将匹配结果存储到 vMatchedIndex 中
             if(entries == 1)
             {
+                //通过j找到迭代器
                 auto iterI = mMatchedIndex.find(indexJ);
+                //迭代器second就是i，通过i找到了最高分数的迭代器
                 auto iterScore = matchedIndexScore.find(iterI->second);
+                //分数最低也要高于阈值
                 if(iterScore->second >= matchTh)
-                {                    
+                {        
+                    //分数和j存到最终匹配结果里            
                     vMatchedIndex.emplace_back(std::make_pair(iterI->second, indexJ));
                 }           
             }
+            //如果某个待匹配特征点有多个匹配项，选择匹配分数最高的匹配项，将匹配结果存储到 vMatchedIndex 中
             else
             { 
                 auto iter1 = mMatchedIndex.find(indexJ);
@@ -834,41 +916,56 @@ namespace BoW3D
     }
 
     //Remove the edge keypoints with low curvature for further edge keypoints matching.
+    /**
+     * @brief 从输入的边缘点云簇（clusters）中剔除曲率较低的点，筛选出具有高曲率的点组成的新的边缘点云簇（filtered）。
+     * 
+     * @param[in] clusters 输入边缘点云簇
+     * @param[out] filtered 具有高曲率的点组成的新的边缘点云簇
+     */
     void LinK3D_Extractor::filterLowCurv(ScanEdgePoints &clusters, ScanEdgePoints &filtered)
     {
+        // 获取输入边缘点云簇的数量。
         int numCluster = clusters.size();
+        // 根据输入的边缘点云簇数量，调整 filtered 的大小，使其与输入的 clusters 保持一致。
         filtered.resize(numCluster);
+        //外层循环遍历每个边缘点云簇（i 是当前点云簇的索引）。
         for(int i = 0; i < numCluster; i++)
         {
             int numPt = clusters[i].size();
             ScanEdgePoints tmpCluster;
             vector<int> vScanID;
-
+            // 内层循环遍历当前点云簇中的每个点（j 是当前点的索引）。
             for(int j = 0; j < numPt; j++)
             {
                 PointXYZSCA pt = clusters[i][j];
+                //获取当前点的扫描线号（scan）。
                 int scan = int(pt.scan_position);
+                //查找 vScanID 中是否存在当前扫描线号。
                 auto it = std::find(vScanID.begin(), vScanID.end(), scan);
-
+                //如果当前扫描线号不在 vScanID 中，将当前点加入新的临时点云簇 tmpCluster 中，并将当前扫描线号加入 vScanID。
                 if(it == vScanID.end())
                 {
                     vScanID.emplace_back(scan);
                     vector<PointXYZSCA> vPt(1, pt);
                     tmpCluster.emplace_back(vPt);
                 }
+                //如果当前扫描线号已经在 vScanID 中，将当前点加入 tmpCluster 中的相应扫描线号的子点云簇中。
                 else
                 {
                     int filteredInd = std::distance(vScanID.begin(), it);
                     tmpCluster[filteredInd].emplace_back(pt);
                 }
             }
-
+            // 遍历 tmpCluster 中的每个扫描线号的子点云簇
             for(size_t scanID = 0; scanID < tmpCluster.size(); scanID++)
             {
+                // 如果子点云簇中只有一个点，直接将该点加入 filtered 中
                 if(tmpCluster[scanID].size() == 1)
                 {
                     filtered[i].emplace_back(tmpCluster[scanID][0]);
                 }
+                //如果子点云簇中有多个点，找出具有最大曲率的点，
+                //将该点加入 filtered 中。这一步骤确保了在同一个扫描线上，只选择曲率最大的点。
                 else
                 {
                     float maxCurv = 0;
@@ -889,23 +986,34 @@ namespace BoW3D
     }
 
     //Get the edge keypoint matches based on the matching results of aggregation keypoints.
+    /**
+     * @brief 该函数根据聚合关键点的匹配结果，获取边缘关键点的匹配。
+     * 细节说明：根据给的子点云簇索引，把处于相同扫描线上的点匹配起来，存到输出结果中
+     * 
+     * @param[in] filtered1 聚合关键点云1
+     * @param[in] filtered2 聚合关键点云2
+     * @param[in] vMatched 匹配索引，注意是点云簇索引
+     * @param[out] matchPoints 匹配出的关键点对
+     */
     void LinK3D_Extractor::findEdgeKeypointMatch(
             ScanEdgePoints &filtered1, 
             ScanEdgePoints &filtered2, 
             vector<std::pair<int, int>> &vMatched, 
             vector<std::pair<PointXYZSCA, PointXYZSCA>> &matchPoints)
     {
-        int numMatched = vMatched.size();
+        int numMatched = vMatched.size();// 获取匹配关系数目。
+        // 外层循环遍历每个点云簇匹配对（i 是当前匹配对的索引）。
         for(int i = 0; i < numMatched; i++)
         {
+            //从 vMatched 中获取当前匹配对的索引 matchedInd，该索引对应的是 filtered1 和 filtered2 中的边缘点云簇。
             pair<int, int> matchedInd = vMatched[i];
-                        
+            // 获取当前匹配对在 filtered1 和 filtered2 中的点数。 
             int numPt1 = filtered1[matchedInd.first].size();
             int numPt2 = filtered2[matchedInd.second].size();
-
+            //创建两个映射（mScanID_Index1 和 mScanID_Index2）用于存储扫描线号与点云索引的关系
             map<int, int> mScanID_Index1;
             map<int, int> mScanID_Index2;
-
+            //遍历第i个(上层循环)匹配子点云簇对中的第一个子点云簇：
             for(int i = 0; i < numPt1; i++)
             {
                 int scanID1 = int(filtered1[matchedInd.first][i].scan_position);
@@ -920,26 +1028,40 @@ namespace BoW3D
                 mScanID_Index2.insert(scanID_Ind);
             }
 
+            //遍历 mScanID_Index1 中的每个扫描线号及对应的点云索引：
             for(auto it1 = mScanID_Index1.begin(); it1 != mScanID_Index1.end(); it1++)
             {
+                //获取当前扫描线号（scanID1）。
                 int scanID1 = (*it1).first;
+                //在 mScanID_Index2 中查找是否存在相同的扫描线号。
                 auto it2 = mScanID_Index2.find(scanID1);
                 if(it2 == mScanID_Index2.end()){
                     continue;
                 }
+                //如果存在相同的扫描线号，说明在两个边缘点云簇中找到了匹配点。
                 else
                 {
+                    //临时变量没用 应该是bug
                     vector<PointXYZSCA> tmpMatchPt;
                     PointXYZSCA pt1 = filtered1[matchedInd.first][(*it1).second];
                     PointXYZSCA pt2 = filtered2[matchedInd.second][(*it2).second];
                     
                     pair<PointXYZSCA, PointXYZSCA> matchPt(pt1, pt2);
+                    //将匹配点对加入 matchPoints 中，最终存储了所有的边缘关键点匹配结果。
                     matchPoints.emplace_back(matchPt);
                 }
             }
         }
     }
 
+    /**
+     * @brief 提供输入点云，提取边缘点，聚类，计算描述子
+     * 
+     * @param pLaserCloudIn 
+     * @param keyPoints 
+     * @param descriptors 
+     * @param validCluster 
+     */
     void LinK3D_Extractor::operator()(pcl::PointCloud<pcl::PointXYZ>::Ptr pLaserCloudIn, vector<pcl::PointXYZI> &keyPoints, cv::Mat &descriptors, ScanEdgePoints &validCluster)
     {
         ScanEdgePoints edgePoints;

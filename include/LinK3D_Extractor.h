@@ -111,9 +111,9 @@ namespace BoW3D
             float minimumRange; //最小点云距离范围，距离原点小于该阈值的点将被删除
 
             float distanceTh; //判断区域内某点和聚类点均值距离，以及在x，y轴上的距离
-            int matchTh;     //匹配阈值？      
-            int scanNumTh;   //阈值？
-            int ptNumTh;     //点数阈值？
+            int matchTh;     //描述子匹配所需的最低分数阈值 ，描述子匹配分数低于此分数的两个关键点不匹配     
+            int scanNumTh;   //阈值？看cpp
+            int ptNumTh;     //点数阈值？看cpp
 
             float cloudCurvature[400000]; //存储点云中点的曲率
     };
