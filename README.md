@@ -1,3 +1,4 @@
+#BoW3D论文学习 源码添加了中文注释 分享给大家
 # BoW3D
 BoW3D is developed for the real-time loop closing in 3D LiDAR SLAM. It builds the bag of words for the **LinK3D Feature** (**[PDF](https://arxiv.org/pdf/2206.05927.pdf)**), which is an efficient and robust 3D LiDAR point cloud feature. BoW3D is able to detect loops and correct the full 6-DoF loop relative pose for the subsequent pose graph optimization in real time. It also can be used to relocalize the 3D LiDAR in real time. We provide an example to run BoW3D on the [KITTI dataset](https://www.cvlibs.net/datasets/kitti/eval_odometry.php). For more details about BoW3D, please refer to our paper **"BoW3D: Bag of Words for Real-Time Loop Closing in 3D LiDAR SLAM"** in IEEE Robotics and Automation Letters (RA-L) (**[PDF](https://arxiv.org/pdf/2208.07473.pdf)**).
 
