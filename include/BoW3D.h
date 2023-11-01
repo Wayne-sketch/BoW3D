@@ -1,3 +1,11 @@
+/*
+ * @Author: ctx cuitongxin201024@163.com
+ * @Date: 2023-10-30 13:35:41
+ * @LastEditors: ctx cuitongxin201024@163.com
+ * @LastEditTime: 2023-10-31 14:34:15
+ * @FilePath: \BoW3D\include\BoW3D.h
+ * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+ */
 #pragma once
 
 #include <iostream>
@@ -26,6 +34,7 @@ namespace BoW3D
     class Frame;
     class LinK3D_extractor;
     
+    //通用的哈希函数
     template <typename T>
     inline void hash_combine(std::size_t &seed, const T &val) 
     {
@@ -61,6 +70,11 @@ namespace BoW3D
         }
     };
    
+   /**
+    * @brief BoW3D 类继承自 std::unordered_map，其中键是 pair<float, int> 类型（用于表示维度值和维度ID的组合），
+    * 值是 std::unordered_set<pair<int, int>, pair_hash> 类型（表示Frame ID和Descriptor ID的组合的集合），
+    * 并且使用了自定义的哈希函数 pair_hash。
+    */
     class BoW3D: public unordered_map<pair<float, int>, unordered_set<pair<int, int>, pair_hash>, pair_hash>  //Dimension value, Dimension ID; Frame ID, Descriptor ID
     {
         public:
@@ -70,19 +84,23 @@ namespace BoW3D
             
             void update(Frame* pCurrentFrame);
 
+            //回环校正
             int loopCorrection(Frame* currentFrame, Frame* matchedFrame, vector<pair<int, int>> &vMatchedIndex, Eigen::Matrix3d &R, Eigen::Vector3d &t);
 
+            //用于检索匹配的3D特征点
             void retrieve(Frame* pCurrentFrame, int &loopFrameId, Eigen::Matrix3d &loopRelR, Eigen::Vector3d &loopRelt);           
 
         private:
             LinK3D_Extractor* mpLinK3D_Extractor;
-
+            //用于计算论文中的比率。
             std::pair<int, int> N_nw_ofRatio; //Used to compute the ratio in our paper.          
 
             vector<Frame*> mvFrames;
-
+            //比率阈值。
             float thr; //Ratio threshold in our paper.
+            //频率阈值。
             int thf; //Frequency threshold in our paper.
+            //每帧添加或检索的特征数量。
             int num_add_retrieve_features; //The number of added or retrieved features for each frame.
     };
 }

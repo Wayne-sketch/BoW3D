@@ -17,15 +17,23 @@ using namespace BoW3D;
 
 
 //Parameters of LinK3D
+//雷达扫描线数
 int nScans = 64; //Number of LiDAR scan lines
+//雷达扫描周期
 float scanPeriod = 0.1; 
+//最小点云距离范围，距离原点小于该阈值的点将被删除
 float minimumRange = 0.1;
+//判断区域内某点和聚类点均值距离，以及在x，y轴上的距离
 float distanceTh = 0.4;
+//描述子匹配所需的最低分数阈值 ，描述子匹配分数低于此分数的两个关键点不匹配
 int matchTh = 6;
 
 //Parameters of BoW3D
+//比率阈值。
 float thr = 3.5;
+//频率阈值。
 int thf = 5;
+//每帧添加或检索的特征数量。
 int num_add_retrieve_features = 5;
 
 //Here, the KITTI's point cloud with '.bin' format is read.
@@ -59,12 +67,14 @@ int main(int argc, char** argv)
     string dataset_folder;
     dataset_folder = "/home/cuiyunge/dataset/velodyne/"; //The last '/' should be added 
 
-
+    //LinK3D提取器
     BoW3D::LinK3D_Extractor* pLinK3dExtractor = new BoW3D::LinK3D_Extractor(nScans, scanPeriod, minimumRange, distanceTh, matchTh); 
+    //BoW3D词袋
     BoW3D::BoW3D* pBoW3D = new BoW3D::BoW3D(pLinK3dExtractor, thr, thf, num_add_retrieve_features);
 
+    //点云索引
     size_t cloudInd = 0;
-
+    //雷达频率，因为是仿真，所以自己设定频率，按频率读取数据
     ros::Rate LiDAR_rate(10); //LiDAR frequency 10Hz
     while (ros::ok())
     {              
@@ -73,6 +83,7 @@ int main(int argc, char** argv)
         vector<float> lidar_data = read_lidar_data(lidar_data_path.str());
         
         pcl::PointCloud<pcl::PointXYZ>::Ptr current_cloud(new pcl::PointCloud<pcl::PointXYZ>());
+        //读取点云数据
         for(std::size_t i = 0; i < lidar_data.size(); i += 4)
         {            
             pcl::PointXYZ point;
@@ -83,8 +94,10 @@ int main(int argc, char** argv)
             current_cloud->push_back(point);
         }
 
+        //创建点云帧
         Frame* pCurrentFrame = new Frame(pLinK3dExtractor, current_cloud); 
             
+        //Id从0开始算，前两帧更新BoW3D词袋
         if(pCurrentFrame->mnId < 2)
         {
             pBoW3D->update(pCurrentFrame);  
@@ -99,13 +112,16 @@ int main(int argc, char** argv)
             double time;       
             start = clock();
 
+            //在3D词袋模型中检索与当前帧相似的帧
             pBoW3D->retrieve(pCurrentFrame, loopFrameId, loopRelR, loopRelt); 
 
             end = clock();
             time = ((double) (end - start)) / CLOCKS_PER_SEC;
             
+            //更新词袋
             pBoW3D->update(pCurrentFrame);               
 
+            //输出检测结果
             if(loopFrameId == -1)
             {
                 cout << "-------------------------" << endl;
